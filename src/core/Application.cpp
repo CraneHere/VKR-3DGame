@@ -28,10 +28,10 @@ Application::~Application()
 
 bool Application::Initialize()
 {
-    std::cout << "=== VKR 3D Game - ODM Ground Movement ===" << std::endl;
+    std::cout << "=== VKR 3D Game ===" << std::endl;
 
     // Создаём окно
-    s_Window = std::make_unique<Window>("VKR 3D Game - ODM Ground Movement", 1600, 900);
+    s_Window = std::make_unique<Window>("VKR 3D Game", 1600, 900);
     if (!s_Window->Create())
     {
         std::cerr << "Failed to create window!" << std::endl;
@@ -78,18 +78,23 @@ void Application::MainLoop()
         // Обработка событий
         s_Window->ProcessEvents();
 
+        // Обработка движения мыши для камеры
+        if (Input::IsMouseCaptured())
+        {
+            float dx = Input::GetMouseDeltaX();
+            float dy = Input::GetMouseDeltaY();
+            // Передаём в Game/Camera если нужно
+        }
+
         // ImGui новый кадр
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
-        // Простой UI
-        ImGui::Begin("Debug Info");
+        ImGui::Begin("Info");
         ImGui::Text("FPS: %.1f", 1.0f / deltaTime);
         ImGui::Text("Press ESC to toggle mouse capture");
-        ImGui::Text("WASD - move, Space - jump");
-        ImGui::Text("LMB/RMB - fire grapples");
-        ImGui::Text("Shift + WASD - ground reel movement");
+        ImGui::Text("WASD - move, Space/Ctrl - up/down");
         ImGui::End();
 
         // Обновление игры

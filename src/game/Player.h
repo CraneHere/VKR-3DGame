@@ -23,6 +23,8 @@ public:
     float mouseSensitivity = 0.1f;
     
     bool isGrounded = true;
+    bool flyMode = false;      // Режим полёта
+    bool flyTogglePressed = false;  // Защита от повторного срабатывания
     
     ODMGear odmGear;
     
@@ -70,142 +72,207 @@ public:
     void update(float deltaTime, const Uint8* keys) {
         glm::vec3 forward = getForward();
         glm::vec3 right = getRight();
+        glm::vec3 camForward = getCameraForward();
         
         glm::vec3 displacement(0.0f);
         
-        // Обычная физика - перемещение по земле
-        glm::vec3 moveDir(0.0f);
-        if (keys[SDL_SCANCODE_W]) moveDir += forward;
-        if (keys[SDL_SCANCODE_S]) moveDir -= forward;
-        if (keys[SDL_SCANCODE_A]) moveDir -= right;
-        if (keys[SDL_SCANCODE_D]) moveDir += right;
+        // Переключение режима полёта
+        bool flyToggle = keys[SDL_SCANCODE_SPACE] && keys[SDL_SCANCODE_LALT];
+        if (flyToggle && !flyTogglePressed) {
+            flyMode = !flyMode;
+            velocity = glm::vec3(0.0f);  // Сбросить скорость
+        }
+        flyTogglePressed = flyToggle;
         
-        if (glm::length(moveDir) > 0.0f) moveDir = glm::normalize(moveDir);
-        
-        glm::vec3 horizontalMove = moveDir * WALK_SPEED * deltaTime;
-        
-        // Движение с тросами на земле (Shift + тросы активны)
-        if (keys[SDL_SCANCODE_LSHIFT] && odmGear.isActive && isGrounded) {
-            // Вычислить центр между точками крепления
-            glm::vec3 targetCenter(0.0f);
-            int activeCount = 0;
+        // Режим полёта
+        if (flyMode) {
+            float flySpeed = keys[SDL_SCANCODE_LSHIFT] ? 100.0f : 30.0f;
             
-            if (odmGear.leftGrapple.active) {
-                targetCenter += odmGear.leftGrapple.attachPoint;
-                activeCount++;
-            }
-            if (odmGear.rightGrapple.active) {
-                targetCenter += odmGear.rightGrapple.attachPoint;
-                activeCount++;
+            glm::vec3 moveDir(0.0f);
+            if (keys[SDL_SCANCODE_W]) moveDir += camForward;
+            if (keys[SDL_SCANCODE_S]) moveDir -= camForward;
+            if (keys[SDL_SCANCODE_A]) moveDir -= right;
+            if (keys[SDL_SCANCODE_D]) moveDir += right;
+            if (keys[SDL_SCANCODE_SPACE] && !keys[SDL_SCANCODE_LALT]) moveDir.y += 1.0f;  // Вверх
+            if (keys[SDL_SCANCODE_LCTRL]) moveDir.y -= 1.0f;  // Вниз
+            
+            if (glm::length(moveDir) > 0.0f) {
+                moveDir = glm::normalize(moveDir);
             }
             
-            if (activeCount > 0) {
-                targetCenter /= (float)activeCount;
+            displacement = moveDir * flySpeed * deltaTime;
+            
+        } else if (odmGear.isActive && !isGrounded) {
+            // Физика УПМ воздухе
+            
+            // Применяем гравитацию
+            velocity.y -= GRAVITY * deltaTime;
+            
+            // Управление газом - ускорение в направлении взгляда
+            if (keys[SDL_SCANCODE_SPACE]) {
+                glm::vec3 gasDirection = getCameraForward();
+                velocity += gasDirection * GAS_BOOST_FORCE * deltaTime;
+            }
+            
+            //Небольшое управление в воздухе
+            glm::vec3 airControl(0.0f);
+            float airControlStrength = 8.0f;
+            if (keys[SDL_SCANCODE_A]) airControl -= right * airControlStrength * deltaTime;
+            if (keys[SDL_SCANCODE_D]) airControl += right * airControlStrength * deltaTime;
+            velocity += airControl;
+            
+            // Применяем физику тросов
+            odmGear.applyGrapplePhysics(velocity, position, controller, deltaTime, keys);
+            
+            // Воздушное сопротивление
+            float airResistance = 1.0f - (AIR_DRAG * deltaTime);
+            velocity.x *= airResistance;
+            velocity.z *= airResistance;
+            
+            // 6. Ограничение максимальной скорости
+            float maxSpeed = 100.0f;
+            float currentSpeed = glm::length(velocity);
+            if (currentSpeed > maxSpeed) {
+                velocity = glm::normalize(velocity) * maxSpeed;
+            }
+            
+            displacement = velocity * deltaTime;
+            
+        } else {
+            // Обычная физика
+            glm::vec3 moveDir(0.0f);
+            if (keys[SDL_SCANCODE_W]) moveDir += forward;
+            if (keys[SDL_SCANCODE_S]) moveDir -= forward;
+            if (keys[SDL_SCANCODE_A]) moveDir -= right;
+            if (keys[SDL_SCANCODE_D]) moveDir += right;
+            
+            if (glm::length(moveDir) > 0.0f) moveDir = glm::normalize(moveDir);
+            
+            glm::vec3 horizontalMove = moveDir * WALK_SPEED * deltaTime;
+            
+            // Движение с тросами на земле
+            if (keys[SDL_SCANCODE_LSHIFT] && odmGear.isActive && isGrounded) {
+                // Вычислить центр между точками крепления
+                glm::vec3 targetCenter(0.0f);
+                int activeCount = 0;
                 
-                // Горизонтальное направление к центру
-                glm::vec3 toTarget = targetCenter - position;
-                float horizontalDist = glm::length(glm::vec2(toTarget.x, toTarget.z));
+                if (odmGear.leftGrapple.active) {
+                    targetCenter += odmGear.leftGrapple.attachPoint;
+                    activeCount++;
+                }
+                if (odmGear.rightGrapple.active) {
+                    targetCenter += odmGear.rightGrapple.attachPoint;
+                    activeCount++;
+                }
                 
-                if (horizontalDist > 0.5f) {
-                    glm::vec3 toCenter = glm::normalize(glm::vec3(toTarget.x, 0.0f, toTarget.z));
-                    // Перпендикулярные направления (скольжение по дуге)
-                    glm::vec3 slideLeft = glm::vec3(toCenter.z, 0.0f, -toCenter.x);
-                    glm::vec3 slideRight = glm::vec3(-toCenter.z, 0.0f, toCenter.x);
+                if (activeCount > 0) {
+                    targetCenter /= (float)activeCount;
                     
-                    float reelSpeed = GROUND_REEL_SPEED;
-                    float brakeDistance = 4.0f;
-                    if (horizontalDist < brakeDistance) {
-                        float t = horizontalDist / brakeDistance;
-                        reelSpeed *= t * t;
-                    }
-
-                    // Проверка расстояния между тросами для обрыва при скольжении
-                    bool bothGrapplesActive = odmGear.leftGrapple.active && odmGear.rightGrapple.active;
-                    float grappleSeparation = 0.0f;
-                    if (bothGrapplesActive) {
-                        grappleSeparation = glm::length(odmGear.leftGrapple.attachPoint - odmGear.rightGrapple.attachPoint);
-                    }
+                    // Горизонтальное направление к центру
+                    glm::vec3 toTarget = targetCenter - position;
+                    float horizontalDist = glm::length(glm::vec2(toTarget.x, toTarget.z));
                     
-                    bool pressA = keys[SDL_SCANCODE_A];
-                    bool pressD = keys[SDL_SCANCODE_D];
-                    bool pressW = keys[SDL_SCANCODE_W];
-                    bool pressS = keys[SDL_SCANCODE_S];
-                    
-                    glm::vec3 grappleDir(0.0f);
-                    bool hasMovement = false;
-                    bool movingLeft = false;
-                    bool movingRight = false;
-                    
-                    // Горизонтальная составляющая
-                    if (pressA && !pressD) {
-                        grappleDir += slideLeft;
-                        movingLeft = true;
-                        hasMovement = true;
-                    } else if (pressD && !pressA) {
-                        grappleDir += slideRight;
-                        movingRight = true;
-                        hasMovement = true;
-                    }
-                    
-                    // Вертикальная составляющая
-                    if (pressW && !pressS) {
-                        grappleDir += toCenter;
-                        hasMovement = true;
-                    } else if (pressS && !pressW) {
-                        grappleDir -= toCenter;
-                        hasMovement = true;
-                    }
-                    
-                    // Применить движение если есть направление
-                    if (hasMovement && glm::length(grappleDir) > 0.1f) {
-                        grappleDir = glm::normalize(grappleDir);
+                    if (horizontalDist > 0.5f) {
+                        glm::vec3 toCenter = glm::normalize(glm::vec3(toTarget.x, 0.0f, toTarget.z));
+                        // Перпендикулярные направления (скольжение по дуге)
+                        glm::vec3 slideLeft = glm::vec3(toCenter.z, 0.0f, -toCenter.x);
+                        glm::vec3 slideRight = glm::vec3(-toCenter.z, 0.0f, toCenter.x);
                         
-                        float speed = reelSpeed;
-                        if (pressS && !pressW && !pressA && !pressD) {
-                            speed = WALK_SPEED * 2.0f;
-                        } else if (pressW && !pressA && !pressD) {
-                            speed = reelSpeed * 1.5f;
+                        float reelSpeed = GROUND_REEL_SPEED;
+                        float brakeDistance = 4.0f;
+                        if (horizontalDist < brakeDistance) {
+                            float t = horizontalDist / brakeDistance;
+                            reelSpeed *= t * t;
+                        }
+
+                        // Проверка расстояния между тросами для обрыва при скольжении
+                        bool bothGrapplesActive = odmGear.leftGrapple.active && odmGear.rightGrapple.active;
+                        float grappleSeparation = 0.0f;
+                        if (bothGrapplesActive) {
+                            grappleSeparation = glm::length(odmGear.leftGrapple.attachPoint - odmGear.rightGrapple.attachPoint);
                         }
                         
-                        slideVelocity = grappleDir * speed;
-                        horizontalMove = glm::vec3(0.0f);
+                        bool pressA = keys[SDL_SCANCODE_A];
+                        bool pressD = keys[SDL_SCANCODE_D];
+                        bool pressW = keys[SDL_SCANCODE_W];
+                        bool pressS = keys[SDL_SCANCODE_S];
                         
-                        // Обрыв тросов при скольжении в стороны
-                        if (bothGrapplesActive && grappleSeparation > GRAPPLE_BREAK_DISTANCE) {
-                            if (movingLeft) {
-                                odmGear.releaseRightGrapple();
-                            } else if (movingRight) {
-                                odmGear.releaseLeftGrapple();
+                        glm::vec3 grappleDir(0.0f);
+                        bool hasMovement = false;
+                        bool movingLeft = false;
+                        bool movingRight = false;
+                        
+                        // Горизонтальная составляющая
+                        if (pressA && !pressD) {
+                            grappleDir += slideLeft;
+                            movingLeft = true;
+                            hasMovement = true;
+                        } else if (pressD && !pressA) {
+                            grappleDir += slideRight;
+                            movingRight = true;
+                            hasMovement = true;
+                        }
+                        
+                        // Вертикальная составляющая
+                        if (pressW && !pressS) {
+                            grappleDir += toCenter;
+                            hasMovement = true;
+                        } else if (pressS && !pressW) {
+                            grappleDir -= toCenter;
+                            hasMovement = true;
+                        }
+                        
+                        // Применить движение если есть направление
+                        if (hasMovement && glm::length(grappleDir) > 0.1f) {
+                            grappleDir = glm::normalize(grappleDir);
+                            
+                            float speed = reelSpeed;
+                            if (pressS && !pressW && !pressA && !pressD) {
+                                speed = WALK_SPEED * 2.0f;
+                            } else if (pressW && !pressA && !pressD) {
+                                speed = reelSpeed * 1.5f;
+                            }
+                            
+                            slideVelocity = grappleDir * speed;
+                            horizontalMove = glm::vec3(0.0f);
+                            
+                            // Обрыв тросов при скольжении в стороны
+                            if (bothGrapplesActive && grappleSeparation > GRAPPLE_BREAK_DISTANCE) {
+                                if (movingLeft) {
+                                    odmGear.releaseRightGrapple();
+                                } else if (movingRight) {
+                                    odmGear.releaseLeftGrapple();
+                                }
                             }
                         }
                     }
                 }
             }
+            
+            // Затухание slideVelocity
+            float decayRate = 6.0f;  // Скорость затухания
+            float decay = exp(-decayRate * deltaTime);
+            slideVelocity *= decay;
+            
+            // Останавливаем если совсем маленькая
+            if (glm::length(slideVelocity) < 0.1f) {
+                slideVelocity = glm::vec3(0.0f);
+            }
+            
+            if (keys[SDL_SCANCODE_SPACE] && isGrounded) {
+                velocity.y = JUMP_FORCE;
+                isGrounded = false;
+            }
+            
+            velocity.y -= GRAVITY * deltaTime;
+            if (velocity.y < -40.0f) velocity.y = -40.0f;
+            
+            float dragFactor = isGrounded ? 0.85f : 0.99f;
+            velocity.x *= dragFactor;
+            velocity.z *= dragFactor;
+            
+            displacement = horizontalMove + slideVelocity * deltaTime + velocity * deltaTime;
         }
-        
-        // Затухание slideVelocity
-        float decayRate = 6.0f;  // Скорость затухания
-        float decay = exp(-decayRate * deltaTime);
-        slideVelocity *= decay;
-        
-        // Останавливаем если совсем маленькая
-        if (glm::length(slideVelocity) < 0.1f) {
-            slideVelocity = glm::vec3(0.0f);
-        }
-        
-        if (keys[SDL_SCANCODE_SPACE] && isGrounded) {
-            velocity.y = JUMP_FORCE;
-            isGrounded = false;
-        }
-        
-        velocity.y -= GRAVITY * deltaTime;
-        if (velocity.y < -40.0f) velocity.y = -40.0f;
-        
-        float dragFactor = isGrounded ? 0.85f : 0.99f;
-        velocity.x *= dragFactor;
-        velocity.z *= dragFactor;
-        
-        displacement = horizontalMove + slideVelocity * deltaTime + velocity * deltaTime;
         
         PxControllerFilters filters;
         PxControllerCollisionFlags collisionFlags = controller->move(

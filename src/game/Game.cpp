@@ -17,14 +17,14 @@ bool Game::Initialize()
 {
     if (m_Initialized) return true;
 
-    // РЎРѕР·РґР°С‘Рј РіРµРѕРјРµС‚СЂРёСЋ
+    // Создаём геометрию
     CreateGeometry();
 
-    // РќР°СЃС‚СЂРѕР№РєР° РєР°РјРµСЂС‹
+    // Настройка камеры
     m_Camera.SetPosition(0.0f, 8.0f, 25.0f);
     m_Camera.SetPerspective(45.0f, 16.0f / 9.0f, 0.1f, 500.0f);
 
-    // OpenGL РЅР°СЃС‚СЂРѕР№РєРё
+    // OpenGL настройки
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
@@ -35,9 +35,10 @@ bool Game::Initialize()
     return true;
 }
 
+
 void Game::CreateGeometry()
 {
-    // РљСѓР±
+    // Куб
     glGenVertexArrays(1, &m_CubeVAO);
     glGenBuffers(1, &m_CubeVBO);
     glGenBuffers(1, &m_CubeEBO);
@@ -57,7 +58,7 @@ void Game::CreateGeometry()
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, CUBE_STRIDE * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
-    // РџРѕР»
+    // Пол
     glGenVertexArrays(1, &m_FloorVAO);
     glGenBuffers(1, &m_FloorVBO);
     glGenBuffers(1, &m_FloorEBO);
@@ -87,11 +88,11 @@ void Game::Render()
 {
     if (!m_Initialized) return;
 
-    // РћС‡РёСЃС‚РєР° СЌРєСЂР°РЅР°
+    // Очистка экрана
     glClearColor(0.2f, 0.3f, 0.4f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // РџСЂРѕСЃС‚РѕР№ СЂРµРЅРґРµСЂРёРЅРі Р±РµР· С€РµР№РґРµСЂРѕРІ (wireframe РґР»СЏ РѕС‚Р»Р°РґРєРё)
+    // Простой рендеринг без шейдеров (wireframe для отладки)
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
     glBindVertexArray(m_FloorVAO);

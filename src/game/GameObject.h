@@ -14,13 +14,13 @@ struct GameObject
     glm::vec3 color = glm::vec3(1.0f);
     bool isDynamic = false;
     bool isGrappleable = false;
-    
+
     glm::vec3 getPosition() const {
         if (!actor) return glm::vec3(0);
         PxTransform t = actor->getGlobalPose();
         return glm::vec3(t.p.x, t.p.y, t.p.z);
     }
-    
+
     glm::mat4 getTransform() const {
         if (!actor) return glm::mat4(1.0f);
         PxTransform t = actor->getGlobalPose();
