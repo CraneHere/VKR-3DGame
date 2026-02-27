@@ -1,0 +1,22 @@
+1. Установка vcpkg:
+
+    cd C:\
+    git clone https://github.com/Microsoft/vcpkg.git
+    cd vcpkg
+    .\bootstrap-vcpkg.bat
+
+2. Установка библиотеки:
+
+    .\vcpkg install sdl2:x64-windows glad:x64-windows glm:x64-windows assimp:x64-windows stb:x64-windows
+
+3. Сборка проекта:
+
+    cd VKR-3DGame
+    mkdir build
+    cd build
+    cmake .. -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -G "Visual Studio 17 2022" -A x64
+    cmake --build . --config Release
+
+4. Запуск:
+
+    .\bin\Release\VKR_3DGame.exe

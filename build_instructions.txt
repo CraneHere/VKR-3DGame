@@ -1,0 +1,32 @@
+cd D:\VKR-3DGame\build
+D:\vcpkg\downloads\tools\cmake-3.31.10-windows\cmake-3.31.10-windows-x86_64\bin\cmake.exe --build . --config Release
+
+
+D:\vcpkg\downloads\tools\cmake-3.31.10-windows\cmake-3.31.10-windows-x86_64\bin\cmake.exe --build . --config Debug
+
+cd D:\vcpkg; .\vcpkg search physx
+
+cd D:\vcpkg; .\vcpkg install physx:x64-windows
+
+Release версия:
+    D:\VKR-3DGame\build\bin\Release\VKR_3DGame.exe
+
+Debug версия:
+    D:\VKR-3DGame\build\bin\Debug\VKR_3DGame.exe
+
+1. Удалить папку build:
+    cd D:\VKR-3DGame
+    Remove-Item -Recurse -Force build
+    mkdir build
+    cd build
+
+
+2. Сконфигурировать заново:
+    D:\vcpkg\downloads\tools\cmake-3.31.10-windows\cmake-3.31.10-windows-x86_64\bin\cmake.exe .. -DCMAKE_TOOLCHAIN_FILE=D:/vcpkg/scripts/buildsystems/vcpkg.cmake -G "Visual Studio 17 2022" -A x64
+
+3. Собрать:
+    D:\vcpkg\downloads\tools\cmake-3.31.10-windows\cmake-3.31.10-windows-x86_64\bin\cmake.exe --build . --config Release
+
+cd D:\VKR-3DGame\build; D:\vcpkg\downloads\tools\cmake-3.31.10-windows\cmake-3.31.10-windows-x86_64\bin\cmake.exe --build . --config Release
+
+cd D:\VKR-3DGame\build; Remove-Item -Recurse -Force *; D:\vcpkg\downloads\tools\cmake-3.31.10-windows\cmake-3.31.10-windows-x86_64\bin\cmake.exe .. -DCMAKE_TOOLCHAIN_FILE=D:/vcpkg/scripts/buildsystems/vcpkg.cmake -G "Visual Studio 17 2022" -A x64
