@@ -60,25 +60,19 @@ public:
             if (scene->raycast(pxOrigin, pxDir, GRAPPLE_MAX_DISTANCE, hit)) {
                 if (hit.hasBlock) {
                     PxRigidActor* hitActor = hit.block.actor;
+                    if (!hitActor || !hitActor->userData) continue;
+
+                    GameObject* gameObj = static_cast<GameObject*>(hitActor->userData);
+                    if (!gameObj->isGrappleable) continue;
                     
-                    if (hitActor && hitActor->userData) {
-                        GameObject* gameObj = static_cast<GameObject*>(hitActor->userData);
-                        
-                        if (!gameObj->isGrappleable) {
-                            continue;
-                        }
-                        
-                        glm::vec3 hitPoint(hit.block.position.x, hit.block.position.y, hit.block.position.z);
-                        
-                        if (otherGrapplePoint != nullptr) {
-                            float separation = glm::length(hitPoint - *otherGrapplePoint);
-                            if (separation < GRAPPLE_MIN_SEPARATION) {
-                                continue;
-                            }
-                        }
-                        
-                        return {true, hitPoint};
+                    glm::vec3 hitPoint(hit.block.position.x, hit.block.position.y, hit.block.position.z);
+                    
+                    if (otherGrapplePoint != nullptr) {
+                        float separation = glm::length(hitPoint - *otherGrapplePoint);
+                        if (separation < GRAPPLE_MIN_SEPARATION) continue;
                     }
+                    
+                    return {true, hitPoint};
                 }
             }
         }

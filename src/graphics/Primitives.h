@@ -50,14 +50,13 @@ const int CUBE_STRIDE = 8;
 
 // пол
 const float FLOOR_VERTICES[] = {
-    // Позиция                // Нормали          // КоордыТекстур
-    -50.0f, 0.0f, -50.0f,      0.0f, 1.0f, 0.0f,   0.0f,  0.0f,
-     50.0f, 0.0f, -50.0f,      0.0f, 1.0f, 0.0f,   10.0f, 0.0f,
-     50.0f, 0.0f,  50.0f,      0.0f, 1.0f, 0.0f,   10.0f, 10.0f,
-    -50.0f, 0.0f,  50.0f,      0.0f, 1.0f, 0.0f,   0.0f,  10.0f,
+    -5000.0f, 0.0f, -5000.0f,   0.0f, 1.0f, 0.0f,   0.0f,   0.0f,
+     5000.0f, 0.0f, -5000.0f,   0.0f, 1.0f, 0.0f,   500.0f, 0.0f,
+     5000.0f, 0.0f,  5000.0f,   0.0f, 1.0f, 0.0f,   500.0f, 500.0f,
+    -5000.0f, 0.0f,  5000.0f,   0.0f, 1.0f, 0.0f,   0.0f,   500.0f,
 };
 
-const unsigned int FLOOR_INDICES[] = { 0, 1, 2, 2, 3, 0 };
+const unsigned int FLOOR_INDICES[] = { 0, 2, 1, 0, 3, 2 };
 
 const int FLOOR_VERTEX_COUNT = 4;
 const int FLOOR_INDEX_COUNT = 6;

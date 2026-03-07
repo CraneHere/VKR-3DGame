@@ -1,6 +1,8 @@
 #include <iostream>
 #include <vector>
 #include <cfloat>
+#include <filesystem>
+#include <algorithm>
 #include <SDL.h>
 #include <glad/glad.h>
 #include <glm/glm.hpp>
@@ -23,7 +25,7 @@
 #include "graphics/Shader.h"
 #include "graphics/Skysphere.h"
 #include "graphics/Model.h"
-#include "core/HouseSerializer.h"
+#include "core/ModelSerializer.h"
 
 int main(int argc, char* argv[])
 {
@@ -106,7 +108,7 @@ int main(int argc, char* argv[])
     
     // Shadow Map
     ShadowMap shadowMap;
-    shadowMap.Initialize(2048, 2048);
+    shadowMap.Initialize(8192, 8192);
     
     // Skysphere (небо)
     Skysphere skysphere;
@@ -129,9 +131,7 @@ int main(int argc, char* argv[])
     fog.heightFalloff = 0.02f;
     fog.enabled = true;
     
-    // Параметры сцены для теней
-    glm::vec3 sceneCenter(0.0f, 30.0f, 40.0f);
-    float sceneRadius = 100.0f;
+    float sceneRadius = 150.0f;
     bool shadowsEnabled = true;
     
     // VAO куба (с нормалями)
@@ -228,50 +228,84 @@ int main(int argc, char* argv[])
         actor->userData = &objects.back();
     };
 
-    // Загрузка 3D-модели
-    Model houseModel;
-    if (!houseModel.LoadFromFile("assets/models/medieval_house_3.glb")) {
-        std::cerr << "Failed to load house model!" << std::endl;
+    struct ModelEntry {
+        Model model;
+        std::string name;
+        std::string path;
+        PxTriangleMesh* collisionMesh = nullptr;
+        float defaultScale = 0.02f;
+        bool grappleable = true;
+    };
+    std::vector<ModelEntry> modelRegistry;
+
+    {
+        const std::string modelsDir = "assets/models";
+        for (const auto& entry : std::filesystem::directory_iterator(modelsDir)) {
+            if (!entry.is_regular_file()) continue;
+            std::string ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext != ".glb" && ext != ".gltf" && ext != ".fbx" && ext != ".obj") continue;
+
+            ModelEntry me;
+            me.path = entry.path().string();
+            me.name = entry.path().filename().string();
+            if (me.model.LoadFromFile(me.path)) {
+                me.collisionMesh = physicsSystem.cookTriangleMesh(
+                    me.model.GetCollisionVertices(), me.model.GetCollisionIndices());
+                modelRegistry.push_back(std::move(me));
+            }
+        }
+        std::sort(modelRegistry.begin(), modelRegistry.end(),
+            [](const ModelEntry& a, const ModelEntry& b) { return a.name < b.name; });
     }
 
-    // Запекаем triangle mesh коллизию
-    PxTriangleMesh* houseCollisionMesh = physicsSystem.cookTriangleMesh(
-        houseModel.GetCollisionVertices(),
-        houseModel.GetCollisionIndices()
-    );
-
-    // Экземпляры домов: позиция, масштаб, поворот, физика
-    struct HouseInstance {
+    struct ModelInstance {
+        int modelIndex;
         glm::vec3 position;
         float scale;
         float rotationY;
         PxRigidStatic* physicsActor = nullptr;
     };
+    std::vector<ModelInstance> placedModels;
+    const std::string scenePath = "assets/houses.json";
 
-    std::vector<HouseInstance> houses;
-    const std::string housesJsonPath = "assets/houses.json";
+    GameObject grappleMarker;
+    grappleMarker.isGrappleable = true;
 
-    // Загрузка домов из JSON
+    auto findModelIndex = [&](const std::string& name) -> int {
+        for (int i = 0; i < (int)modelRegistry.size(); i++)
+            if (modelRegistry[i].name == name) return i;
+        return -1;
+    };
+
     {
-        auto loaded = HouseSerializer::LoadHouses(housesJsonPath);
-        for (const auto& hd : loaded) {
-            HouseInstance hi;
-            hi.position = hd.position;
-            hi.scale = hd.scale;
-            hi.rotationY = hd.rotationY;
-            if (houseCollisionMesh) {
-                hi.physicsActor = physicsSystem.createStaticTriangleMesh(
-                    houseCollisionMesh, hi.position, hi.scale, hi.rotationY);
+        auto loaded = ModelSerializer::Load(scenePath);
+        for (const auto& d : loaded) {
+            int idx = findModelIndex(d.modelName);
+            if (idx < 0) {
+                std::cerr << "Model not found in registry: " << d.modelName << std::endl;
+                continue;
             }
-            houses.push_back(hi);
+            ModelInstance mi;
+            mi.modelIndex = idx;
+            mi.position = d.position;
+            mi.scale = d.scale;
+            mi.rotationY = d.rotationY;
+            if (modelRegistry[idx].collisionMesh) {
+                mi.physicsActor = physicsSystem.createStaticTriangleMesh(
+                    modelRegistry[idx].collisionMesh, mi.position, mi.scale, mi.rotationY);
+                if (modelRegistry[idx].grappleable)
+                    mi.physicsActor->userData = &grappleMarker;
+            }
+            placedModels.push_back(mi);
         }
     }
 
-    // Состояние редактора
     bool editorMode = false;
     bool editorTogglePressed = false;
+    int selectedModelIndex = 0;
     float ghostRotationY = 0.0f;
-    const float defaultHouseScale = 0.02f;
+    float ghostScale = modelRegistry.empty() ? 0.02f : modelRegistry[0].defaultScale;
     glm::vec3 ghostPosition(0.0f);
     bool ghostValid = false;
 
@@ -372,54 +406,56 @@ int main(int argc, char* argv[])
             }
             if (!keys[SDL_SCANCODE_TAB]) editorTogglePressed = false;
 
-            // Ctrl+S — сохранить
             {
                 static bool savePressed = false;
                 bool saveDown = editorMode && keys[SDL_SCANCODE_LCTRL] && keys[SDL_SCANCODE_S];
                 if (saveDown && !savePressed) {
-                    std::vector<HouseData> data;
-                    data.reserve(houses.size());
-                    for (const auto& h : houses) {
-                        data.push_back({ h.position, h.scale, h.rotationY });
+                    std::vector<ModelInstanceData> data;
+                    data.reserve(placedModels.size());
+                    for (const auto& mi : placedModels) {
+                        ModelInstanceData d;
+                        d.modelName = modelRegistry[mi.modelIndex].name;
+                        d.position = mi.position;
+                        d.scale = mi.scale;
+                        d.rotationY = mi.rotationY;
+                        data.push_back(d);
                     }
-                    HouseSerializer::SaveHouses(housesJsonPath, data);
+                    ModelSerializer::Save(scenePath, data);
                 }
                 savePressed = saveDown;
             }
 
-            // Ctrl+Z — отменить последнее размещение
             {
                 static bool undoPressed = false;
                 bool undoDown = editorMode && keys[SDL_SCANCODE_LCTRL] && keys[SDL_SCANCODE_Z];
-                if (undoDown && !undoPressed && !houses.empty()) {
-                    if (houses.back().physicsActor) {
-                        physicsSystem.scene->removeActor(*houses.back().physicsActor);
-                        houses.back().physicsActor->release();
+                if (undoDown && !undoPressed && !placedModels.empty()) {
+                    if (placedModels.back().physicsActor) {
+                        physicsSystem.scene->removeActor(*placedModels.back().physicsActor);
+                        placedModels.back().physicsActor->release();
                     }
-                    houses.pop_back();
-                    std::cout << "Undo: removed last house (" << houses.size() << " remaining)" << std::endl;
+                    placedModels.pop_back();
+                    std::cout << "Undo: removed last instance (" << placedModels.size() << " remaining)" << std::endl;
                 }
                 undoPressed = undoDown;
             }
 
-            // Delete — удалить ближайший к прицелу дом
             {
                 static bool deletePressed = false;
                 bool delDown = editorMode && keys[SDL_SCANCODE_DELETE];
-                if (delDown && !deletePressed && ghostValid && !houses.empty()) {
+                if (delDown && !deletePressed && ghostValid && !placedModels.empty()) {
                     float minDist = FLT_MAX;
                     int closest = -1;
-                    for (int i = 0; i < (int)houses.size(); i++) {
-                        float d = glm::length(houses[i].position - ghostPosition);
+                    for (int i = 0; i < (int)placedModels.size(); i++) {
+                        float d = glm::length(placedModels[i].position - ghostPosition);
                         if (d < minDist) { minDist = d; closest = i; }
                     }
                     if (closest >= 0 && minDist < 30.0f) {
-                        if (houses[closest].physicsActor) {
-                            physicsSystem.scene->removeActor(*houses[closest].physicsActor);
-                            houses[closest].physicsActor->release();
+                        if (placedModels[closest].physicsActor) {
+                            physicsSystem.scene->removeActor(*placedModels[closest].physicsActor);
+                            placedModels[closest].physicsActor->release();
                         }
-                        houses.erase(houses.begin() + closest);
-                        std::cout << "Deleted house (" << houses.size() << " remaining)" << std::endl;
+                        placedModels.erase(placedModels.begin() + closest);
+                        std::cout << "Deleted instance (" << placedModels.size() << " remaining)" << std::endl;
                     }
                 }
                 deletePressed = delDown;
@@ -440,23 +476,27 @@ int main(int argc, char* argv[])
             }
         }
 
-        // Редактор: ЛКМ — поставить дом
-        if (editorMode && mouseCaptured) {
+        if (editorMode && mouseCaptured && !modelRegistry.empty()) {
             Uint32 mouseState = SDL_GetMouseState(nullptr, nullptr);
             static bool placementClick = false;
             if ((mouseState & SDL_BUTTON(SDL_BUTTON_LEFT)) && !placementClick && ghostValid) {
-                HouseInstance hi;
-                hi.position = ghostPosition;
-                hi.scale = defaultHouseScale;
-                hi.rotationY = ghostRotationY;
-                if (houseCollisionMesh) {
-                    hi.physicsActor = physicsSystem.createStaticTriangleMesh(
-                        houseCollisionMesh, hi.position, hi.scale, hi.rotationY);
+                ModelInstance mi;
+                mi.modelIndex = selectedModelIndex;
+                mi.position = ghostPosition;
+                mi.scale = ghostScale;
+                mi.rotationY = ghostRotationY;
+                auto& entry = modelRegistry[selectedModelIndex];
+                if (entry.collisionMesh) {
+                    mi.physicsActor = physicsSystem.createStaticTriangleMesh(
+                        entry.collisionMesh, mi.position, mi.scale, mi.rotationY);
+                    if (entry.grappleable)
+                        mi.physicsActor->userData = &grappleMarker;
                 }
-                houses.push_back(hi);
-                std::cout << "Placed house at (" << ghostPosition.x << ", "
-                          << ghostPosition.y << ", " << ghostPosition.z
-                          << ") rot=" << ghostRotationY << " (" << houses.size() << " total)" << std::endl;
+                placedModels.push_back(mi);
+                std::cout << "Placed " << entry.name << " at ("
+                          << ghostPosition.x << ", " << ghostPosition.y << ", " << ghostPosition.z
+                          << ") scale=" << ghostScale << " rot=" << ghostRotationY
+                          << " (" << placedModels.size() << " total)" << std::endl;
                 placementClick = true;
             }
             if (!(mouseState & SDL_BUTTON(SDL_BUTTON_LEFT))) placementClick = false;
@@ -481,11 +521,12 @@ int main(int argc, char* argv[])
         glm::vec3 camPos = player.getCameraPosition();
         glm::vec3 camFront = player.getCameraForward();
         glm::mat4 view = glm::lookAt(camPos, camPos + camFront, glm::vec3(0, 1, 0));
-        glm::mat4 proj = glm::perspective(glm::radians(75.0f), (float)screenWidth / screenHeight, 0.1f, 500.0f);
+        glm::mat4 proj = glm::perspective(glm::radians(75.0f), (float)screenWidth / screenHeight, 0.5f, 5000.0f);
         
-        // Light space matrix для теней
+        glm::vec3 shadowCenter = camPos;
+        shadowCenter.y = 0.0f;
         glm::mat4 lightSpaceMatrix = shadowMap.CalculateLightSpaceMatrix(
-            sunLight.direction, sceneCenter, sceneRadius
+            sunLight.direction, shadowCenter, sceneRadius
         );
         
         // Матрица модели пола
@@ -515,13 +556,12 @@ int main(int argc, char* argv[])
                 glDrawElements(GL_TRIANGLES, CUBE_INDEX_COUNT, GL_UNSIGNED_INT, 0);
             }
 
-            // Рендерим все экземпляры 3D-модели в shadow map
-            for (const auto& h : houses) {
-                glm::mat4 hm = glm::translate(glm::mat4(1.0f), h.position);
-                hm = glm::rotate(hm, glm::radians(h.rotationY), glm::vec3(0, 1, 0));
-                hm = glm::scale(hm, glm::vec3(h.scale));
+            for (const auto& mi : placedModels) {
+                glm::mat4 hm = glm::translate(glm::mat4(1.0f), mi.position);
+                hm = glm::rotate(hm, glm::radians(mi.rotationY), glm::vec3(0, 1, 0));
+                hm = glm::scale(hm, glm::vec3(mi.scale));
                 shadowShader.SetMat4("uModel", glm::value_ptr(hm));
-                houseModel.Draw(shadowShader.GetID());
+                modelRegistry[mi.modelIndex].model.Draw(shadowShader.GetID());
             }
 
             glCullFace(GL_BACK);
@@ -574,7 +614,7 @@ int main(int argc, char* argv[])
         // Пол
         glBindVertexArray(floorVAO);
         mainShader.SetMat4("uModel", glm::value_ptr(floorModel));
-        mainShader.SetVec3("uObjectColor", 0.35f, 0.4f, 0.32f);
+        mainShader.SetVec3("uObjectColor", 0.5f, 0.5f, 0.5f);
         glDrawElements(GL_TRIANGLES, FLOOR_INDEX_COUNT, GL_UNSIGNED_INT, 0);
 
         // Объекты (здания)
@@ -586,31 +626,30 @@ int main(int argc, char* argv[])
             glDrawElements(GL_TRIANGLES, CUBE_INDEX_COUNT, GL_UNSIGNED_INT, 0);
         }
 
-        // Все экземпляры 3D-модели
         glDisable(GL_CULL_FACE);
-        for (const auto& h : houses) {
-            glm::mat4 hm = glm::translate(glm::mat4(1.0f), h.position);
-            hm = glm::rotate(hm, glm::radians(h.rotationY), glm::vec3(0, 1, 0));
-            hm = glm::scale(hm, glm::vec3(h.scale));
+        for (const auto& mi : placedModels) {
+            glm::mat4 hm = glm::translate(glm::mat4(1.0f), mi.position);
+            hm = glm::rotate(hm, glm::radians(mi.rotationY), glm::vec3(0, 1, 0));
+            hm = glm::scale(hm, glm::vec3(mi.scale));
             mainShader.SetMat4("uModel", glm::value_ptr(hm));
             mainShader.SetVec3("uObjectColor", 1.0f, 1.0f, 1.0f);
-            houseModel.Draw(mainShader.GetID());
+            modelRegistry[mi.modelIndex].model.Draw(mainShader.GetID());
+            mainShader.SetBool("uUseTexture", false);
         }
 
-        // Призрак дома в режиме редактора
-        if (editorMode && ghostValid) {
+        if (editorMode && ghostValid && !modelRegistry.empty()) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDepthMask(GL_FALSE);
 
             glm::mat4 ghostMat = glm::translate(glm::mat4(1.0f), ghostPosition);
             ghostMat = glm::rotate(ghostMat, glm::radians(ghostRotationY), glm::vec3(0, 1, 0));
-            ghostMat = glm::scale(ghostMat, glm::vec3(defaultHouseScale));
+            ghostMat = glm::scale(ghostMat, glm::vec3(ghostScale));
             mainShader.SetMat4("uModel", glm::value_ptr(ghostMat));
             mainShader.SetVec3("uObjectColor", 0.3f, 1.0f, 0.4f);
             mainShader.SetFloat("uAlpha", 0.4f);
             mainShader.SetBool("uUseTexture", false);
-            houseModel.Draw(mainShader.GetID());
+            modelRegistry[selectedModelIndex].model.Draw(mainShader.GetID());
 
             mainShader.SetFloat("uAlpha", 1.0f);
             glDepthMask(GL_TRUE);
@@ -732,39 +771,12 @@ int main(int argc, char* argv[])
             ImGui::SliderFloat("Height Falloff", &fog.heightFalloff, 0.0f, 0.2f, "%.3f");
         }
         
-        if (ImGui::CollapsingHeader("House Editor", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (editorMode) {
-                ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "EDITOR MODE: ON");
-                ImGui::Separator();
-                ImGui::Text("Houses placed: %d", (int)houses.size());
-                ImGui::SliderFloat("Ghost Rotation", &ghostRotationY, 0.0f, 360.0f);
-                if (ghostValid) {
-                    ImGui::Text("Aim: (%.1f, %.1f, %.1f)",
-                        ghostPosition.x, ghostPosition.y, ghostPosition.z);
-                } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Look down to aim");
-                }
-                ImGui::Separator();
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Controls:");
-                ImGui::BulletText("LMB - Place house");
-                ImGui::BulletText("Scroll - Rotate");
-                ImGui::BulletText("Delete - Remove nearest");
-                ImGui::BulletText("Ctrl+S - Save");
-                ImGui::BulletText("Ctrl+Z - Undo");
-                ImGui::BulletText("Tab - Exit editor");
-            } else {
-                ImGui::Text("Houses: %d", (int)houses.size());
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                    "Press Tab to enter editor");
-            }
-        }
-
         if (ImGui::CollapsingHeader("Performance")) {
             ImGui::Checkbox("Shadows Enabled", &shadowsEnabled);
             if (ImGui::Checkbox("V-Sync", &vsyncEnabled)) {
                 SDL_GL_SetSwapInterval(vsyncEnabled ? 1 : 0);
             }
-            ImGui::Text("Shadow Map: 2048x2048");
+            ImGui::Text("Shadow Map: 8192x8192");
             ImGui::Text("Objects: %d", (int)objects.size());
             if (!shadowsEnabled) {
                 ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Shadows OFF - better FPS");
@@ -772,7 +784,52 @@ int main(int argc, char* argv[])
         }
         
         ImGui::End();
-        
+
+        ImGui::SetNextWindowPos(ImVec2(10, 500), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(300, 320), ImGuiCond_FirstUseEver);
+        ImGui::Begin("Model Editor");
+        if (modelRegistry.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "No models in assets/models/");
+        } else if (editorMode) {
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "EDITOR MODE: ON");
+            ImGui::Separator();
+
+            if (ImGui::BeginCombo("Model", modelRegistry[selectedModelIndex].name.c_str())) {
+                for (int i = 0; i < (int)modelRegistry.size(); i++) {
+                    bool selected = (i == selectedModelIndex);
+                    if (ImGui::Selectable(modelRegistry[i].name.c_str(), selected)) {
+                        selectedModelIndex = i;
+                        ghostScale = modelRegistry[i].defaultScale;
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+
+            ImGui::SliderFloat("Scale", &ghostScale, 0.001f, 500.0f, "%.3f");
+            ImGui::SliderFloat("Rotation", &ghostRotationY, 0.0f, 360.0f);
+            ImGui::Text("Placed: %d", (int)placedModels.size());
+            if (ghostValid) {
+                ImGui::Text("Aim: (%.1f, %.1f, %.1f)",
+                    ghostPosition.x, ghostPosition.y, ghostPosition.z);
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Look down to aim");
+            }
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Controls:");
+            ImGui::BulletText("LMB - Place model");
+            ImGui::BulletText("Scroll - Rotate");
+            ImGui::BulletText("Delete - Remove nearest");
+            ImGui::BulletText("Ctrl+S - Save");
+            ImGui::BulletText("Ctrl+Z - Undo");
+            ImGui::BulletText("Tab - Exit editor");
+        } else {
+            ImGui::Text("Models loaded: %d", (int)modelRegistry.size());
+            ImGui::Text("Placed: %d", (int)placedModels.size());
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Press Tab to enter editor");
+        }
+        ImGui::End();
+
         // Debug Info
         ImGui::SetNextWindowPos(ImVec2((float)screenWidth - 320, 10), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(310, 450), ImGuiCond_Always);
@@ -846,7 +903,8 @@ int main(int argc, char* argv[])
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     
-    houseModel.Cleanup();
+    for (auto& me : modelRegistry)
+        me.model.Cleanup();
     shadowMap.Shutdown();
     skysphere.Shutdown();
     physicsSystem.shutdown();
