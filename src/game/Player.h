@@ -13,6 +13,7 @@ public:
     PxController* controller = nullptr;
     glm::vec3 velocity = glm::vec3(0.0f);
     glm::vec3 slideVelocity = glm::vec3(0.0f);  // Инерция от притягивания
+    glm::vec3 airMomentum = glm::vec3(0.0f);
     glm::vec3 position = glm::vec3(0.0f);
     glm::vec3 previousPosition = glm::vec3(0.0f);
     float realSpeed = 0.0f;
@@ -82,7 +83,21 @@ public:
         
         if (glm::length(moveDir) > 0.0f) moveDir = glm::normalize(moveDir);
         
-        glm::vec3 horizontalMove = moveDir * WALK_SPEED * deltaTime;
+        glm::vec3 horizontalMove;
+        
+        if (isGrounded) {
+            horizontalMove = moveDir * WALK_SPEED * deltaTime;
+            airMomentum = moveDir * WALK_SPEED;
+        } else {
+            if (glm::length(moveDir) > 0.0f) {
+                airMomentum += moveDir * WALK_SPEED * AIR_CONTROL * deltaTime;
+                float speed = glm::length(airMomentum);
+                if (speed > WALK_SPEED) {
+                    airMomentum = glm::normalize(airMomentum) * WALK_SPEED;
+                }
+            }
+            horizontalMove = airMomentum * deltaTime;
+        }
         
         // Движение с тросами на земле (Shift + тросы активны)
         if (keys[SDL_SCANCODE_LSHIFT] && odmGear.isActive && isGrounded) {

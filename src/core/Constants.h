@@ -22,6 +22,7 @@ const float GRAPPLE_BREAK_DISTANCE = 25.0f;  // Расстояние между 
 
 // Физика
 const float PHYSICS_TIMESTEP = 1.0f / 60.0f;
+const float AIR_CONTROL = 0.3f;
 
 // Рендеринг
 const int ROPE_SEGMENTS = 20;
