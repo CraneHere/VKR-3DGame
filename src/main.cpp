@@ -307,12 +307,13 @@ int main(int argc, char* argv[])
             if (event.type == SDL_MOUSEBUTTONDOWN && mouseCaptured && !io.WantCaptureMouse) {
                 glm::vec3 forward = player.getCameraForward();
                 glm::vec3 right = player.getRight();
+                float speed = glm::length(player.velocity);
                 
                 if (event.button.button == SDL_BUTTON_LEFT) {
-                    player.odmGear.fireLeftGrapple(physicsSystem.scene, player.position, forward, right);
+                    player.odmGear.fireLeftGrapple(physicsSystem.scene, player.position, forward, right, speed);
                 }
                 else if (event.button.button == SDL_BUTTON_RIGHT) {
-                    player.odmGear.fireRightGrapple(physicsSystem.scene, player.position, forward, right);
+                    player.odmGear.fireRightGrapple(physicsSystem.scene, player.position, forward, right, speed);
                 }
             }
             

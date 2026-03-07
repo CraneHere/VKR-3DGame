@@ -9,6 +9,21 @@
 
 using namespace physx;
 
+class GrappleQueryFilter : public PxQueryFilterCallback {
+public:
+    PxQueryHitType::Enum preFilter(
+        const PxFilterData&, const PxShape*, const PxRigidActor* actor, PxHitFlags&
+    ) override {
+        if (!actor || !actor->userData) return PxQueryHitType::eNONE;
+        GameObject* obj = static_cast<GameObject*>(const_cast<void*>(actor->userData));
+        if (!obj->isGrappleable) return PxQueryHitType::eNONE;
+        return PxQueryHitType::eBLOCK;
+    }
+    PxQueryHitType::Enum postFilter(const PxFilterData&, const PxQueryHit&, const PxShape*, const PxRigidActor*) override {
+        return PxQueryHitType::eBLOCK;
+    }
+};
+
 struct GrappleHook {
     bool active = false;
     glm::vec3 attachPoint = glm::vec3(0);
@@ -47,6 +62,10 @@ public:
         int direction,
         const glm::vec3* otherGrapplePoint
     ) {
+        GrappleQueryFilter grappleFilter;
+        PxQueryFilterData filterData;
+        filterData.flags = PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER;
+        
         for (float angle = 0.0f; angle <= GRAPPLE_SCAN_ANGLE; angle += GRAPPLE_SCAN_STEP) {
             float radAngle = glm::radians(angle * direction);
             glm::vec3 rayDir = glm::normalize(
@@ -57,28 +76,18 @@ public:
             PxVec3 pxOrigin(origin.x, origin.y, origin.z);
             PxVec3 pxDir(rayDir.x, rayDir.y, rayDir.z);
             
-            if (scene->raycast(pxOrigin, pxDir, GRAPPLE_MAX_DISTANCE, hit)) {
+            if (scene->raycast(pxOrigin, pxDir, GRAPPLE_MAX_DISTANCE, hit, PxHitFlag::eDEFAULT, filterData, &grappleFilter)) {
                 if (hit.hasBlock) {
-                    PxRigidActor* hitActor = hit.block.actor;
+                    glm::vec3 hitPoint(hit.block.position.x, hit.block.position.y, hit.block.position.z);
                     
-                    if (hitActor && hitActor->userData) {
-                        GameObject* gameObj = static_cast<GameObject*>(hitActor->userData);
-                        
-                        if (!gameObj->isGrappleable) {
+                    if (otherGrapplePoint != nullptr) {
+                        float separation = glm::length(hitPoint - *otherGrapplePoint);
+                        if (separation < GRAPPLE_MIN_SEPARATION) {
                             continue;
                         }
-                        
-                        glm::vec3 hitPoint(hit.block.position.x, hit.block.position.y, hit.block.position.z);
-                        
-                        if (otherGrapplePoint != nullptr) {
-                            float separation = glm::length(hitPoint - *otherGrapplePoint);
-                            if (separation < GRAPPLE_MIN_SEPARATION) {
-                                continue;
-                            }
-                        }
-                        
-                        return {true, hitPoint};
                     }
+                    
+                    return {true, hitPoint};
                 }
             }
         }
@@ -86,7 +95,7 @@ public:
     }
     
     // Выпустить левый трос
-    bool fireLeftGrapple(PxScene* scene, const glm::vec3& position, const glm::vec3& forward, const glm::vec3& right) {
+    bool fireLeftGrapple(PxScene* scene, const glm::vec3& position, const glm::vec3& forward, const glm::vec3& right, float playerSpeed = 0.0f) {
         glm::vec3 hipOffset = glm::vec3(0.0f, -PLAYER_HEIGHT * 0.3f, 0.0f);
         glm::vec3 leftHip = position + hipOffset - right * 0.3f;
         const glm::vec3* otherPoint = rightGrapple.active ? &rightGrapple.attachPoint : nullptr;
@@ -97,9 +106,9 @@ public:
             leftGrapple.active = true;
             leftGrapple.attachPoint = hitPoint;
             leftGrapple.startPoint = leftHip;
-            leftGrapple.visualStartPoint = position + hipOffset - right * 0.4f; // Визуальная - с левого бока
+            leftGrapple.visualStartPoint = position + hipOffset - right * 0.4f;
             leftGrapple.length = glm::length(hitPoint - leftHip);
-            leftGrapple.initialLength = leftGrapple.length;
+            leftGrapple.initialLength = leftGrapple.length + playerSpeed * 0.5f;
             leftGrapple.reeling = true;
             return true;
         }
@@ -107,7 +116,7 @@ public:
     }
     
     // Выпустить правый трос
-    bool fireRightGrapple(PxScene* scene, const glm::vec3& position, const glm::vec3& forward, const glm::vec3& right) {
+    bool fireRightGrapple(PxScene* scene, const glm::vec3& position, const glm::vec3& forward, const glm::vec3& right, float playerSpeed = 0.0f) {
         glm::vec3 hipOffset = glm::vec3(0.0f, -PLAYER_HEIGHT * 0.3f, 0.0f);
         glm::vec3 rightHip = position + hipOffset + right * 0.3f;
         const glm::vec3* otherPoint = leftGrapple.active ? &leftGrapple.attachPoint : nullptr;
@@ -118,9 +127,9 @@ public:
             rightGrapple.active = true;
             rightGrapple.attachPoint = hitPoint;
             rightGrapple.startPoint = rightHip;
-            rightGrapple.visualStartPoint = position + hipOffset + right * 0.4f; // Визуальная - с правого бока
+            rightGrapple.visualStartPoint = position + hipOffset + right * 0.4f;
             rightGrapple.length = glm::length(hitPoint - rightHip);
-            rightGrapple.initialLength = rightGrapple.length;
+            rightGrapple.initialLength = rightGrapple.length + playerSpeed * 0.5f;
             rightGrapple.reeling = true;
             return true;
         }
@@ -252,16 +261,6 @@ public:
         
         glm::vec3 ropeDirToCenter = glm::normalize(toCenter);
         
-        if (keys[SDL_SCANCODE_W]) {
-            float reelForce = GRAPPLE_REEL_SPEED * deltaTime;
-            playerVel += ropeDirToCenter * reelForce;
-        }
-
-        if (keys[SDL_SCANCODE_S]) {
-            float unreelForce = GRAPPLE_REEL_SPEED * 0.3f * deltaTime;
-            playerVel -= ropeDirToCenter * unreelForce;
-        }
-        
         // Обработка каждого троса для ограничения длины
         auto processGrapple = [&](GrappleHook& grapple) {
             if (!grapple.active) return;
@@ -272,37 +271,8 @@ public:
             if (distToAnchor > 0.1f) {
                 glm::vec3 ropeDir = glm::normalize(toAnchor);
                 
-                // Намотка уменьшает длину троса
-                if (keys[SDL_SCANCODE_W] && grapple.initialLength > 2.0f) {
-                    grapple.initialLength -= GRAPPLE_REEL_SPEED * deltaTime * 0.5f;
-                    if (grapple.initialLength < 2.0f) {
-                        grapple.initialLength = 2.0f;
-                    }
-                }
-                
-                // Отмотка увеличивает длину троса
-                if (keys[SDL_SCANCODE_S] && grapple.initialLength < 150.0f) {
-                    grapple.initialLength += GRAPPLE_REEL_SPEED * deltaTime * 0.3f;
-                }
-                
                 if (distToAnchor > grapple.initialLength) {
-                    // Проекция скорости на направление троса
-                    float velAlongRope = glm::dot(playerVel, ropeDir);
-                    
-                    // Убираем компоненту скорости от точки крепления
-                    if (velAlongRope < 0) {
-                        playerVel -= ropeDir * velAlongRope;
-                        // Добавляем упругость для реалистичности
-                        playerVel += ropeDir * velAlongRope * 0.2f;
-                    }
-                    
-                    // Возвращаем игрока на длину троса
-                    float excess = distToAnchor - grapple.initialLength;
-                    if (excess > 0.1f) {
-                        glm::vec3 correction = ropeDir * excess;
-                        playerPos += correction;
-                        controller->setPosition(PxExtendedVec3(playerPos.x, playerPos.y, playerPos.z));
-                    }
+                    grapple.reset();
                 }
             }
         };

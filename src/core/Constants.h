@@ -39,6 +39,7 @@ const float MIN_ROPE_LENGTH = 3.0f;
 
 // Физика
 const float PHYSICS_TIMESTEP = 1.0f / 60.0f;
+const float AIR_CONTROL = 0.7f;
 
 // Рендеринг
 const int ROPE_SEGMENTS = 20;

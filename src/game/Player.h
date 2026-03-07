@@ -13,6 +13,7 @@ public:
     PxController* controller = nullptr;
     glm::vec3 velocity = glm::vec3(0.0f);
     glm::vec3 slideVelocity = glm::vec3(0.0f);  // Инерция от притягивания
+    glm::vec3 airMomentum = glm::vec3(0.0f);
     glm::vec3 position = glm::vec3(0.0f);
     glm::vec3 previousPosition = glm::vec3(0.0f);
     float realSpeed = 0.0f;
@@ -25,6 +26,7 @@ public:
     bool isGrounded = true;
     bool flyMode = false;      // Режим полёта
     bool flyTogglePressed = false;  // Защита от повторного срабатывания
+    bool wasInODMAir = false;
     
     ODMGear odmGear;
     
@@ -105,21 +107,54 @@ public:
         } else if (odmGear.isActive && !isGrounded) {
             // Физика УПМ воздухе
             
+            if (!wasInODMAir) {
+                velocity.x += airMomentum.x;
+                velocity.z += airMomentum.z;
+                airMomentum = glm::vec3(0.0f);
+            }
+            wasInODMAir = true;
+            
             // Применяем гравитацию
             velocity.y -= GRAVITY * deltaTime;
             
-            // Управление газом - ускорение в направлении взгляда
-            if (keys[SDL_SCANCODE_SPACE]) {
-                glm::vec3 gasDirection = getCameraForward();
-                velocity += gasDirection * GAS_BOOST_FORCE * deltaTime;
+            // W - подтягивание + плавный поворот в направлении взгляда
+            if (keys[SDL_SCANCODE_W]) {
+                float currentSpeed = glm::length(velocity);
+                if (currentSpeed > 1.0f) {
+                    glm::vec3 currentDir = velocity / currentSpeed;
+                    float steerRate = 3.0f;
+                    float t = glm::clamp(steerRate * deltaTime, 0.0f, 1.0f);
+                    glm::vec3 newDir = glm::normalize(glm::mix(currentDir, camForward, t));
+                    velocity = newDir * currentSpeed;
+                }
+                velocity += camForward * GRAPPLE_REEL_SPEED * 0.3f * deltaTime;
+            }
+            if (keys[SDL_SCANCODE_S]) {
+                velocity -= camForward * GRAPPLE_REEL_SPEED * 0.3f * deltaTime;
             }
             
-            //Небольшое управление в воздухе
-            glm::vec3 airControl(0.0f);
-            float airControlStrength = 8.0f;
-            if (keys[SDL_SCANCODE_A]) airControl -= right * airControlStrength * deltaTime;
-            if (keys[SDL_SCANCODE_D]) airControl += right * airControlStrength * deltaTime;
-            velocity += airControl;
+            // Управление газом - дополнительное ускорение
+            if (keys[SDL_SCANCODE_SPACE]) {
+                velocity += camForward * GAS_BOOST_FORCE * deltaTime;
+            }
+            
+            // A/D - поворот в воздухе
+            {
+                float currentSpeed = glm::length(velocity);
+                if (currentSpeed > 1.0f) {
+                    glm::vec3 currentDir = velocity / currentSpeed;
+                    float sideSteerRate = 2.0f;
+                    float t = glm::clamp(sideSteerRate * deltaTime, 0.0f, 1.0f);
+                    if (keys[SDL_SCANCODE_A]) {
+                        glm::vec3 targetDir = glm::normalize(currentDir - right * 0.5f);
+                        velocity = glm::normalize(glm::mix(currentDir, targetDir, t)) * currentSpeed;
+                    }
+                    if (keys[SDL_SCANCODE_D]) {
+                        glm::vec3 targetDir = glm::normalize(currentDir + right * 0.5f);
+                        velocity = glm::normalize(glm::mix(currentDir, targetDir, t)) * currentSpeed;
+                    }
+                }
+            }
             
             // Применяем физику тросов
             odmGear.applyGrapplePhysics(velocity, position, controller, deltaTime, keys);
@@ -140,6 +175,14 @@ public:
             
         } else {
             // Обычная физика
+            
+            if (wasInODMAir && !isGrounded) {
+                airMomentum = glm::vec3(velocity.x, 0.0f, velocity.z);
+                velocity.x = 0.0f;
+                velocity.z = 0.0f;
+            }
+            wasInODMAir = false;
+            
             glm::vec3 moveDir(0.0f);
             if (keys[SDL_SCANCODE_W]) moveDir += forward;
             if (keys[SDL_SCANCODE_S]) moveDir -= forward;
@@ -148,7 +191,22 @@ public:
             
             if (glm::length(moveDir) > 0.0f) moveDir = glm::normalize(moveDir);
             
-            glm::vec3 horizontalMove = moveDir * WALK_SPEED * deltaTime;
+            glm::vec3 horizontalMove;
+
+            if (isGrounded) {
+                horizontalMove = moveDir * WALK_SPEED * deltaTime;
+                airMomentum = moveDir * WALK_SPEED;
+            }
+            else {
+                if (glm::length(airMomentum) > WALK_SPEED) {
+                    float decayRate = 3.0f;
+                    float decay = exp(-decayRate * deltaTime);
+                    float newSpeed = WALK_SPEED + (glm::length(airMomentum) - WALK_SPEED) * decay;
+                    airMomentum = glm::normalize(airMomentum) * newSpeed;
+                }
+                
+                horizontalMove = airMomentum * deltaTime;
+            }
             
             // Движение с тросами на земле
             if (keys[SDL_SCANCODE_LSHIFT] && odmGear.isActive && isGrounded) {
