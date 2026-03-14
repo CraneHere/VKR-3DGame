@@ -21,10 +21,8 @@ private:
     void CreateGeometry();
 
 private:
-    // Камера
     Camera m_Camera;
 
-    // Геометрия сцены
     GLuint m_CubeVAO = 0, m_CubeVBO = 0, m_CubeEBO = 0;
     GLuint m_FloorVAO = 0, m_FloorVBO = 0, m_FloorEBO = 0;
 
