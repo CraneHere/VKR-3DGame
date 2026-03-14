@@ -52,7 +52,7 @@ int main(int argc, char* argv[])
         SDL_GL_DeleteContext(glContext); SDL_DestroyWindow(window); SDL_Quit(); return -1;
     }
 
-    SDL_GL_SetSwapInterval(1);
+    SDL_GL_SetSwapInterval(0);
     bool vsyncEnabled = true;
     
     int screenWidth, screenHeight;
@@ -521,7 +521,7 @@ int main(int argc, char* argv[])
         glm::vec3 camPos = player.getCameraPosition();
         glm::vec3 camFront = player.getCameraForward();
         glm::mat4 view = glm::lookAt(camPos, camPos + camFront, glm::vec3(0, 1, 0));
-        glm::mat4 proj = glm::perspective(glm::radians(75.0f), (float)screenWidth / screenHeight, 0.5f, 5000.0f);
+        glm::mat4 proj = glm::perspective(glm::radians(75.0f), (float)screenWidth / screenHeight, 0.5f, 10000.0f);
         
         glm::vec3 shadowCenter = camPos;
         shadowCenter.y = 0.0f;
