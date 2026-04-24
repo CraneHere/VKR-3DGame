@@ -78,6 +78,8 @@ public:
         
         glm::vec3 displacement(0.0f);
         
+        odmGear.isActive = odmGear.leftGrapple.active || odmGear.rightGrapple.active;
+        
         // Переключение режима полёта: Space + Alt
         bool flyToggle = keys[SDL_SCANCODE_SPACE] && keys[SDL_SCANCODE_LALT];
         if (flyToggle && !flyTogglePressed) {
@@ -105,6 +107,15 @@ public:
             displacement = moveDir * flySpeed * deltaTime;
             
         } else if (odmGear.isActive && !isGrounded) {
+            // Восстановить скорость если только что перезацепились
+            float horizSpeed = glm::length(glm::vec2(velocity.x, velocity.z));
+            float momentumSpeed = glm::length(airMomentum);
+            if (horizSpeed < 1.0f && momentumSpeed > 1.0f) {
+                velocity.x = airMomentum.x;
+                velocity.z = airMomentum.z;
+                airMomentum = glm::vec3(0.0f);
+            }
+            
             wasInODMAir = true;
             
             // Применяем гравитацию
