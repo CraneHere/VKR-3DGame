@@ -1,0 +1,48 @@
+# Сборка
+build/
+out/
+cmake-build-*/
+.vs/
+x64/
+Debug/
+Release/
+
+# Visual Studio
+*.sln
+*.vcxproj*
+*.user
+*.suo
+*.db
+*.opendb
+ipch/
+
+# Бинарные файлы
+*.exe
+*.dll
+*.lib
+*.obj
+*.o
+*.a
+*.pdb
+*.ilk
+*.exp
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Временные файлы
+*.log
+*.tmp
+*.temp
+*~
+Thumbs.db
+.DS_Store
+
+# Зависимости (если установлены локально)
+vcpkg_installed/
+
+
+
+
